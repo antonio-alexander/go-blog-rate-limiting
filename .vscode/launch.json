@@ -1,0 +1,51 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "client",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceRoot}",
+            "program": "${workspaceRoot}/cmd/client/main.go",
+            "args": [],
+            "env": {
+                "HTTP_ADDRESS": "jumpman",
+                "HTTP_PORT": "8081",
+                "TIMEOUT": "60",
+                // "MODE": "multiple_requests",
+                "MODE": "single_request",
+                "NUMBER_OF_REQUESTS": "4",
+                "NUMBER_OF_APPLICATIONS": "2",
+                "REQUEST_RATE": "1", //seconds
+                "WAIT": "1", //seconds
+                "ID": "",
+                "APPLICATION_ID": "",
+                "RETRY": "true",
+                "MAX_RETRIES": "2",
+            }
+        },
+        {
+            "name": "server",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceRoot}",
+            "program": "${workspaceRoot}/cmd/server/main.go",
+            "env": {
+                "HTTP_ADDRESS": "",
+                "HTTP_PORT": "8080",
+                "READ_TIMEOUT": "1",
+                "WRITE_TIMEOUT": "1",
+                "ALGORITHM": "token_bucket",
+                "MAX_TOKENS": "4",
+                "TOKEN_REPLENISH": "1", //seconds
+                "QUEUE_SIZE": "5",
+                "LEAK_RATE": "500", //milliseconds
+            }
+        },
+    ]
+}

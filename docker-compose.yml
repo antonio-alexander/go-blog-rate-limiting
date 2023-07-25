@@ -1,0 +1,60 @@
+version: "3.3"
+
+services:
+  nginx:
+    container_name: "nginx"
+    hostname: "nginx"
+    image: ghcr.io/antonio-alexander/go-blog-rate-limiting_nginx:latest
+    restart: "always"
+    ports:
+      - "8080:8080"
+    build:
+      context: ./
+      dockerfile: ./cmd/nginx/Dockerfile
+      args:
+        PLATFORM: linux/amd64
+        GO_ARCH: amd64
+
+  server:
+    hostname: server
+    image: ghcr.io/antonio-alexander/go-blog-rate-limiting_server:latest
+    ports:
+      - "8080"
+    build:
+      context: ./
+      dockerfile: ./cmd/server/Dockerfile
+      args:
+        PLATFORM: linux/amd64
+        GO_ARCH: amd64
+    environment:
+      HTTP_ADDRESS: ${HTTP_ADDRESS}
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      READ_TIMEOUT: ${READ_TIMEOUT:-1}
+      WRITE_TIMEOUT: ${WRITE_TIMEOUT:-1}
+      ALGORITHM: ${ALGORITHM:-token_bucket}
+      MAX_TOKENS: ${MAX_TOKENS:-4}
+      TOKEN_REPLENISH: ${TOKEN_REPLENISH:-1} #seconds
+      QUEUE_SIZE: ${QUEUE_SIZE:-5}
+      LEAK_RATE: ${LEAK_RATE:-500} #milliseconds
+
+  client:
+    container_name: client
+    hostname: client
+    image: ghcr.io/antonio-alexander/go-blog-rate-limiting_client:latest
+    build:
+      context: ./
+      dockerfile: ./cmd/client/Dockerfile
+      args:
+        PLATFORM: linux/amd64
+        GO_ARCH: amd64
+    environment:
+      HTTP_ADDRESS: ${HTTP_ADDRESS:-host.docker.internal}
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      TIMEOUT: ${TIMEOUT:-60}
+      MODE: ${MODE:-multiple_requests}
+      NUMBER_OF_REQUESTS: ${NUMBER_OF_REQUESTS:-4}
+      NUMBER_OF_APPLICATIONS: ${NUMBER_OF_APPLICATIONS:-2}
+      REQUEST_RATE: ${REQUEST_RATE:-1} #seconds
+      WAIT: ${WAIT:-1} #seconds
+      RETRY: ${RETRY:-true}
+      MAX_RETRIES: ${MAX_RETRIES:-2}
