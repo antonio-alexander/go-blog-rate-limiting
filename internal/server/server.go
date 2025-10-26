@@ -4,229 +4,144 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/antonio-alexander/go-blog-rate-limiting/internal/config"
 	"github.com/antonio-alexander/go-blog-rate-limiting/internal/data"
-	"github.com/antonio-alexander/go-blog-rate-limiting/internal/logic"
+	"github.com/antonio-alexander/go-blog-rate-limiting/internal/limiter"
+
 	"github.com/pkg/errors"
 )
 
-const (
-	RETRY_AFTER     string = "Retry-After"
-	serverLogPrefix string = "[server] "
-)
+const serverLogPrefix string = "[server] "
 
-func endpointWait(w http.ResponseWriter, r *http.Request) {
+type server struct {
+	sync.WaitGroup
+	sync.RWMutex
+	config struct {
+		host           string
+		port           string
+		algorithm      string
+		tokenReplinish time.Duration
+	}
+	rateLimiter limiter.Limiter
+	httpServer  *http.Server
+	chError     chan error
+}
+
+func New(parameters ...any) Server {
+	s := &server{}
+	for _, parameter := range parameters {
+		switch p := parameter.(type) {
+		case *config.Configuration:
+			s.config.host = p.Host
+			s.config.port = p.Port
+			s.config.algorithm = p.Algorithm
+			s.config.tokenReplinish = p.TokenReplinish
+		case limiter.Limiter:
+			s.rateLimiter = p
+		}
+	}
+	return s
+}
+
+func (s *server) errorHandler(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusInternalServerError)
+	if _, err = w.Write([]byte(err.Error())); err != nil {
+		fmt.Printf(serverLogPrefix+"error while writing bytes: %s\n", err.Error())
+	}
+}
+
+func (s *server) endpointWait(w http.ResponseWriter, r *http.Request) {
+	//get request
 	request := data.NewRequest()
 	if err := request.FromRequest(r); err != nil {
-		fmt.Printf("error while reading body: %s\n", err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		if _, err = w.Write([]byte(err.Error())); err != nil {
-			fmt.Printf("error while writing bytes: %s\n", err.Error())
-		}
+		s.errorHandler(w, err)
 		return
 	}
 
 	//execute business logic
 	select {
 	case <-time.After(request.Wait):
-		fmt.Printf("%s: wait of %v completed\n", request.Id, request.Wait)
+		fmt.Printf(serverLogPrefix+"%s: wait of %v completed\n", request.Id, request.Wait)
 	case <-r.Context().Done():
-		fmt.Printf("%s: wait cancelled (context)\n", request.Id)
+		fmt.Printf(serverLogPrefix+"%s: wait cancelled (context)\n", request.Id)
 		return
 	}
 
 	//marshal response
 	bytes, err := json.Marshal(&data.Response{
-		Id:     request.Id,
-		Wait:   request.Wait,
-		Weight: request.Weight,
+		Id:            request.Id,
+		ApplicationId: request.ApplicationId,
+		Wait:          request.Wait,
+		Weight:        request.Weight,
 	})
 	if err != nil {
-		fmt.Printf("error while marshalling response: %s\n", err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		if _, err = w.Write([]byte(err.Error())); err != nil {
-			fmt.Printf("error while writing bytes: %s\n", err.Error())
-		}
+		s.errorHandler(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Length", fmt.Sprint(len(bytes)))
 	if _, err = w.Write(bytes); err != nil {
-		fmt.Printf("error while writing bytes: %s\n", err.Error())
+		fmt.Printf(serverLogPrefix+"error while writing bytes: %s\n", err.Error())
 	}
 }
 
-func endpointWaitWeightedTokenBucket(rateLimiter *logic.WeightedTokenBucket) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		request := data.NewRequest()
-		if err := request.FromRequest(r); err != nil {
-			fmt.Printf("error while reading body: %s\n", err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			if _, err = w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
+func (s *server) launchServer() error {
+	started := make(chan struct{})
+	s.Add(1)
+	go func() {
+		defer s.Done()
 
-		//execute the rate limiter
-		if rateLimiter.Limit(request.ApplicationId, int64(request.Weight)) {
-			err := errors.Errorf("too many requests received")
-			w.WriteHeader(http.StatusTooManyRequests)
-			//REVIEW: would like for this to be dynamic
-			w.Header().Add(RETRY_AFTER, "3600")
-			if _, err := w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
+		close(started)
+		fmt.Printf(serverLogPrefix+"server listening on %s\n", s.httpServer.Addr)
+		if err := s.httpServer.ListenAndServe(); err != nil {
+			if !errors.Is(err, http.ErrServerClosed) {
+				s.chError <- err
 			}
-			return
 		}
-
-		//execute business logic
-		select {
-		case <-time.After(request.Wait):
-			fmt.Printf("%s: wait of %v completed\n", request.Id, request.Wait)
-		case <-r.Context().Done():
-			fmt.Printf("%s: wait cancelled (context)\n", request.Id)
-			return
-		}
-
-		//marshal response
-		bytes, err := json.Marshal(&data.Response{
-			Id:     request.Id,
-			Wait:   request.Wait,
-			Weight: request.Weight,
-		})
-		if err != nil {
-			fmt.Printf("error while marshalling response: %s\n", err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			if _, err = w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Content-Length", fmt.Sprint(len(bytes)))
-		if _, err = w.Write(bytes); err != nil {
-			fmt.Printf("error while writing bytes: %s\n", err.Error())
-		}
+	}()
+	<-started
+	select {
+	case <-time.After(time.Second): //wait one second for error
+		return nil
+	case err := <-s.chError:
+		return err
 	}
 }
 
-func endpointWaitTokenBucket(rateLimiter *logic.TokenBucket) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		request := data.NewRequest()
-		if err := request.FromRequest(r); err != nil {
-			fmt.Printf("error while reading body: %s\n", err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			if _, err = w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
+func (s *server) Start() error {
+	s.Lock()
+	defer s.Unlock()
 
-		//execute the rate limiter
-		if rateLimiter.Limit(request.ApplicationId) {
-			err := errors.Errorf("too many requests received")
-			w.WriteHeader(http.StatusTooManyRequests)
-			//REVIEW: would like for this to be dynamic
-			w.Header().Add(RETRY_AFTER, "3600")
-			if _, err := w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
-
-		//execute business logic
-		select {
-		case <-time.After(request.Wait):
-			fmt.Printf("%s: wait of %v completed\n", request.Id, request.Wait)
-		case <-r.Context().Done():
-			fmt.Printf("%s: wait cancelled (context)\n", request.Id)
-			return
-		}
-
-		//marshal response
-		bytes, err := json.Marshal(&data.Response{
-			Id:     request.Id,
-			Wait:   request.Wait,
-			Weight: request.Weight,
-		})
-		if err != nil {
-			fmt.Printf("error while marshalling response: %s\n", err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			if _, err = w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Content-Length", fmt.Sprint(len(bytes)))
-		if _, err = w.Write(bytes); err != nil {
-			fmt.Printf("error while writing bytes: %s\n", err.Error())
-		}
+	mux := http.NewServeMux()
+	mux.Handle(data.MethodWait+" "+data.RouteWait, s.rateLimiter.Middleware(s.endpointWait))
+	httpServer := &http.Server{Handler: mux}
+	httpServer.Addr = s.config.host
+	if s.config.port != "" {
+		httpServer.Addr = ":" + s.config.port
 	}
+	s.chError = make(chan error, 1)
+	s.httpServer = httpServer
+	return s.launchServer()
 }
 
-func endpointWaitLeakyBucket(rateLimiter *logic.LeakyBucket) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		request := data.NewRequest()
-		if err := request.FromRequest(r); err != nil {
-			fmt.Printf("error while reading body: %s\n", err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			if _, err = w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
+func (s *server) Stop() error {
+	s.Lock()
+	defer s.Unlock()
 
-		//execute the rate limiter
-		limited, signalOut := rateLimiter.Limit(request.ApplicationId)
-		if limited {
-			err := errors.Errorf("too many requests received")
-			w.WriteHeader(http.StatusTooManyRequests)
-			//REVIEW: would like for this to be dynamic
-			w.Header().Add(RETRY_AFTER, "3600")
-			if _, err := w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
-
-		select {
-		case <-r.Context().Done():
-			fmt.Printf("%s: wait cancelled (context)\n", request.Id)
-			return
-		case <-signalOut:
-		}
-
-		//execute business logic
-		select {
-		case <-r.Context().Done():
-			fmt.Printf("%s: wait cancelled (context)\n", request.Id)
-			return
-		case <-time.After(request.Wait):
-			fmt.Printf("%s: wait of %v completed\n", request.Id, request.Wait)
-		}
-
-		//marshal response
-		bytes, err := json.Marshal(&data.Response{
-			Id:     request.Id,
-			Wait:   request.Wait,
-			Weight: request.Weight,
-		})
-		if err != nil {
-			fmt.Printf("error while marshalling response: %s\n", err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			if _, err = w.Write([]byte(err.Error())); err != nil {
-				fmt.Printf("error while writing bytes: %s\n", err.Error())
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Content-Length", fmt.Sprint(len(bytes)))
-		if _, err = w.Write(bytes); err != nil {
-			fmt.Printf("error while writing bytes: %s\n", err.Error())
-		}
-
+	defer func() {
+		close(s.chError)
+	}()
+	if err := s.httpServer.Close(); err != nil {
+		return err
+	}
+	s.Wait()
+	select {
+	case <-time.After(time.Second): //wait one second for error
+		return nil
+	case err := <-s.chError:
+		return err
 	}
 }

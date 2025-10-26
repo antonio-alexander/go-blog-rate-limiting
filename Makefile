@@ -5,7 +5,7 @@
 ## ----------------------------------------------------------------------
 
 docker_args=
-docker_scale_num=2
+docker_scale_num=1
 
 # REFERENCE: https://stackoverflow.com/questions/16931770/makefile4-missing-separator-stop
 help: ## - Show this help.
@@ -16,10 +16,20 @@ build: ## - build the source (latest)
 	--build-arg GIT_BRANCH=`git rev-parse --abbrev-ref HEAD`
 	@docker ${docker_args} image prune -f
 
+dep: ## - run the service and its dependencies (docker) detached
+	@docker ${docker_args} compose up -d --wait
+
+run-server: ## - run the service and its dependencies (docker) detached
+	@docker ${docker_args} compose --profile server up -d --wait --scale server=${docker_scale_num}
+
+run-client: ## - run the service and its dependencies (docker) detached
+	@docker ${docker_args} compose --profile client up -d  --wait --scale server=${docker_scale_num}
+
 run: ## - run the service and its dependencies (docker) detached
-	@docker ${docker_args} compose up -d --wait --scale server=${docker_scale_num}
+	@docker ${docker_args} compose --profile server --profile client up -d --wait --scale server=${docker_scale_num}
 
 stop:
-	@docker ${docker_args} compose --profile client down
+	@docker ${docker_args} compose --profile client --profile server down
 
 clean:
+	@docker ${docker_args} compose --profile client --profile server down --volumes

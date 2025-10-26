@@ -14,6 +14,7 @@ The goal of this repo is to attempt to implement a handful of rate limiting solu
 - [https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429)
 - [https://pspdfkit.com/blog/2018/how-to-use-docker-compose-to-run-multiple-instances-of-a-service-in-development/](https://pspdfkit.com/blog/2018/how-to-use-docker-compose-to-run-multiple-instances-of-a-service-in-development/)
 - [https://gist.github.com/xameeramir/a5cb675fb6a6a64098365e89a239541d](https://gist.github.com/xameeramir/a5cb675fb6a6a64098365e89a239541d)
+- [https://medium.com/@aedemirsen/load-balancing-with-docker-compose-and-nginx-b9077696f624](https://medium.com/@aedemirsen/load-balancing-with-docker-compose-and-nginx-b9077696f624)
 
 ## Use Cases
 
@@ -21,15 +22,11 @@ These are a collection of use cases I want to test and confirm:
 
 - As an application, if I attempt to access an endpoint that's rate limited at 1Hz at 2Hz, I'll receive my responses at 1Hz
   - Constraints are that the messages will run for a known maximum time (to avoid having to use infinite buffers and wait an indeterminate amount of time)
-
 - As an application, if I attempt to access an endpoint that's rate limited at 1Hz at 2Hz for half a second, I'll receive my responses at 1Hz
-
 - As an application, if I attempt to access an endpoint that's rate limited at 1Hz and send a burst of requests, I'll receive my responses at 1Hz
   - Constraints are that the burst has a certain size upon which we'll do something if the burst size is exceeded
-
 - As an application, If I attempt to access an endpoint that's rate limited and I send multiple requests with a payload that will take a significant amount of time, I'll be rate limited instead
   - This assumes some way to weight a request dependent on the payload contents
-
 - As a rate limited application, if multiple applications attempt to access an endpoint that's rate limited, but don't exceed their specific rates, how can I ensure that in aggregate I don't exceed the rate limit?
   - This attempts to capture a situation like our bandwidth being 10Hz and we have 11 applications sending data at 1 Hz
 
@@ -99,7 +96,7 @@ The server implementation is relatively straight forward if you ignore the algor
 - cache the request and process it at a slower rate (using some kind of queue)
 - process the request at the same time it was sent
 
-> Although it's totally possible to cache requests and process them at a slower rate that they came in at, it can get terrible complex and if done correctly, you'd still have an upper limit where you'd need to start discarding requests as they too can affect the problem you're trying to mitigate with rate limiting
+> Although it's totally possible to cache requests and process them at a slower rate that they came in at, it can get terrible complex and even if done correctly, you'd still have an upper limit where you'd need to start discarding requests as they too can affect the problem you're trying to mitigate with rate limiting
 
 ### Client
 
@@ -156,7 +153,7 @@ How does rate limiting interact with cancelled requests?
 
 > I think that any API that attempts to implement rate limiting HAS to be able to respond to cancelled requests. Most rate limiting algorithms fall apart when it comes to bursty data, specifically bursty data around the time where the algorithm reaches its criteria to stop limiting requests. IF you're not taking into account cancelled requests, it's possible to appear as if you have a lot of requests in flight, but in actuality, the consumer is no longer waiting for a response (and your application is wasting cpu/memory). While not every possible process can dynamically respond to a cancelled request, not doing so if you can is leaving money on the table.
 
-![archer_flex_account](./_images/archer_flex_account.gif)
+![archer_flex_account](./docs/images/archer_flex_account.gif)
 
 How is a given algorithm affected by multiple instances of a given application?
 

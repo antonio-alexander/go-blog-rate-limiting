@@ -1,6 +1,6 @@
 module github.com/antonio-alexander/go-blog-rate-limiting
 
-go 1.19
+go 1.23
 
 require (
 	github.com/antonio-alexander/go-queue v1.2.2

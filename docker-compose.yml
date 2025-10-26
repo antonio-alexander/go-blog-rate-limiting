@@ -1,24 +1,28 @@
-version: "3.3"
-
 services:
   nginx:
     container_name: "nginx"
     hostname: "nginx"
-    image: ghcr.io/antonio-alexander/go-blog-rate-limiting_nginx:latest
+    image: nginx:1.21.6-alpine
+    profiles: ["server"]
     restart: "always"
     ports:
       - "8080:8080"
-    build:
-      context: ./
-      dockerfile: ./cmd/nginx/Dockerfile
-      args:
-        PLATFORM: linux/amd64
-        GO_ARCH: amd64
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/conf.d/default.conf
+
+  redis:
+    container_name: "redis"
+    hostname: "redis"
+    image: redis:7.0.12-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server --save 20 1 --loglevel warning
 
   server:
-    hostname: server
     image: ghcr.io/antonio-alexander/go-blog-rate-limiting_server:latest
-    ports:
+    profiles: ["server"]
+    expose:
       - "8080"
     build:
       context: ./
@@ -31,16 +35,17 @@ services:
       HTTP_PORT: ${HTTP_PORT:-8080}
       READ_TIMEOUT: ${READ_TIMEOUT:-1}
       WRITE_TIMEOUT: ${WRITE_TIMEOUT:-1}
-      ALGORITHM: ${ALGORITHM:-token_bucket}
+      ALGORITHM: ${ALGORITHM:-token_memory}
       MAX_TOKENS: ${MAX_TOKENS:-4}
-      TOKEN_REPLENISH: ${TOKEN_REPLENISH:-1} #seconds
+      TOKEN_REPLENISH_S: ${TOKEN_REPLENISH_S:-1} #seconds
       QUEUE_SIZE: ${QUEUE_SIZE:-5}
-      LEAK_RATE: ${LEAK_RATE:-500} #milliseconds
+      LEAK_RATE_MS: ${LEAK_RATE_MS:-500} #milliseconds
 
   client:
     container_name: client
     hostname: client
     image: ghcr.io/antonio-alexander/go-blog-rate-limiting_client:latest
+    profiles: ["client"]
     build:
       context: ./
       dockerfile: ./cmd/client/Dockerfile

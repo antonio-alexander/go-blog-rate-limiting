@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/antonio-alexander/go-blog-rate-limiting/internal/config"
 	"github.com/antonio-alexander/go-blog-rate-limiting/internal/data"
 
 	"github.com/pkg/errors"
@@ -17,29 +18,38 @@ import (
 // const clientLogPrefix string = "[client] "
 
 type client struct {
-	address    string
-	timeout    time.Duration
-	retry      bool
-	maxRetries int
+	config struct {
+		timeout    time.Duration
+		retry      bool
+		maxRetries int
+	}
+	address string
 }
 
-func New(c *Configuration) interface {
+type Client interface {
 	Wait(context.Context, *data.Request) (*data.Response, error)
-} {
-	address := "http://" + c.Address
-	if c.Port != "" {
-		address = address + ":" + c.Port
+}
+
+func New(parameters ...any) Client {
+	c := &client{}
+	for _, parameter := range parameters {
+		switch p := parameter.(type) {
+		case *config.Configuration:
+			c.address = "http://" + p.Host
+			if p.Port != "" {
+				c.address += ":" + p.Port
+			}
+			c.config.timeout = p.Timeout
+			c.config.retry = p.Retry
+			c.config.maxRetries = p.MaxRetries
+		}
 	}
-	return &client{
-		address: address,
-		timeout: c.Timeout,
-		retry:   c.Retry,
-	}
+	return c
 }
 
 func (c *client) doRequest(ctx context.Context, uri, method string, data []byte) ([]byte, int, error) {
 	client := new(http.Client)
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.config.timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, method, uri, bytes.NewBuffer(data))
 	if err != nil {
@@ -49,15 +59,18 @@ func (c *client) doRequest(ctx context.Context, uri, method string, data []byte)
 	if err != nil {
 		return nil, -1, err
 	}
-	if c.retry && response.StatusCode == http.StatusTooManyRequests {
+	if c.config.retry && response.StatusCode == http.StatusTooManyRequests {
 		i, _ := strconv.ParseInt(response.Header.Get("Retry-After"), 10, 64)
 		if i <= 0 {
 			i = 1000
 		}
 		tRetry := time.NewTicker(time.Millisecond * time.Duration(i))
 		defer tRetry.Stop()
-		for i := 0; i < c.maxRetries; i++ {
+		for i := 0; i < c.config.maxRetries; i++ {
 			<-tRetry.C
+			ctx, cancel := context.WithTimeout(ctx, c.config.timeout)
+			defer cancel()
+			request = request.WithContext(ctx)
 			response, err = client.Do(request)
 			if err != nil {
 				return nil, -1, err
@@ -68,10 +81,10 @@ func (c *client) doRequest(ctx context.Context, uri, method string, data []byte)
 		}
 	}
 	data, err = io.ReadAll(response.Body)
-	defer response.Body.Close()
 	if err != nil {
 		return nil, -1, err
 	}
+	response.Body.Close()
 	return data, response.StatusCode, nil
 }
 
@@ -81,10 +94,10 @@ func (c *client) Wait(ctx context.Context, request *data.Request) (*data.Respons
 	if err != nil {
 		return nil, err
 	}
-	uri := c.address + "/wait"
+	uri := c.address + data.RouteWait
 
 	//execute request
-	bytes, statusCode, err := c.doRequest(ctx, uri, http.MethodPost, bytes)
+	bytes, statusCode, err := c.doRequest(ctx, uri, data.MethodWait, bytes)
 	if err != nil {
 		return nil, err
 	}

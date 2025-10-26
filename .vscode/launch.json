@@ -38,13 +38,11 @@
             "env": {
                 "HTTP_ADDRESS": "",
                 "HTTP_PORT": "8080",
-                "READ_TIMEOUT": "1",
-                "WRITE_TIMEOUT": "1",
-                "ALGORITHM": "token_bucket",
+                "ALGORITHM": "token_memory",
                 "MAX_TOKENS": "4",
-                "TOKEN_REPLENISH": "1", //seconds
+                "TOKEN_REPLENISH_S": "2", //seconds
                 "QUEUE_SIZE": "5",
-                "LEAK_RATE": "500", //milliseconds
+                "LEAK_RATE_MS": "500", //milliseconds
             }
         },
     ]
